@@ -1,0 +1,19 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+sqlalchemy>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+
+# SQLite (development — default)
+aiosqlite>=0.20.0
+
+# MySQL (production) — uncomment and set DATABASE_URL in .env
+# aiomysql>=0.2.0
+# PyMySQL>=1.1.0
+
+# Pull mode
+pyzk>=0.9
+
+# Scheduling
+apscheduler>=3.10.0

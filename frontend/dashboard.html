@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --surface2:  #1c2330;
+    --border:    #30363d;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --accent:    #58a6ff;
+    --green:     #3fb950;
+    --yellow:    #d29922;
+    --red:       #f85149;
+    --orange:    #f0883e;
+    --purple:    #bc8cff;
+    --radius:    10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  /* ── Layout ── */
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 0;
+    display: flex; flex-direction: column;
+    position: fixed; top: 0; left: 0; bottom: 0;
+  }
+  .main { margin-left: 220px; flex: 1; padding: 28px 32px; }
+
+  /* ── Sidebar ── */
+  .logo {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-text {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.3px;
+  }
+  .logo-sub { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: 'DM Mono', monospace; }
+  .nav { padding: 12px 10px; flex: 1; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 7px;
+    color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: all .15s; margin-bottom: 2px;
+    border: none; background: none; width: 100%; text-align: left;
+  }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: rgba(88,166,255,.12); color: var(--accent); }
+  .nav-icon { width: 16px; height: 16px; flex-shrink: 0; }
+  .nav-section { font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: .08em;
+                 text-transform: uppercase; padding: 12px 12px 6px; }
+  .sidebar-footer {
+    padding: 14px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
+    font-family: 'DM Mono', monospace;
+  }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-red   { background: var(--red); }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .page-title { font-size: 20px; font-weight: 600; letter-spacing: -0.4px; }
+  .page-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .topbar-right { display: flex; gap: 10px; align-items: center; }
+
+  /* ── Stat cards ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px;
+    position: relative; overflow: hidden;
+  }
+  .stat-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+  .stat-card.s-green::before { background: var(--green); }
+  .stat-card.s-yellow::before { background: var(--yellow); }
+  .stat-card.s-red::before { background: var(--red); }
+  .stat-card.s-purple::before { background: var(--purple); }
+  .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .08em; color: var(--muted); margin-bottom: 8px; }
+  .stat-value { font-size: 32px; font-weight: 600; font-family: 'DM Mono', monospace;
+                letter-spacing: -1px; line-height: 1; }
+  .stat-value.c-green  { color: var(--green); }
+  .stat-value.c-yellow { color: var(--yellow); }
+  .stat-value.c-red    { color: var(--red); }
+  .stat-value.c-purple { color: var(--purple); }
+  .stat-footer { font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+  /* ── Panels ── */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 18px;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  .panel-title { font-size: 13px; font-weight: 600; }
+  .panel-body  { padding: 16px 20px; }
+
+  /* ── Controls ── */
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input[type="date"], input[type="text"], select {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 12px; border-radius: 7px;
+    font-size: 13px; font-family: 'DM Sans', sans-serif;
+    outline: none; transition: border-color .15s;
+  }
+  input[type="date"]:focus, input[type="text"]:focus, select:focus {
+    border-color: var(--accent);
+  }
+  select option { background: var(--surface2); }
+  .btn {
+    padding: 7px 16px; border-radius: 7px; border: 1px solid var(--border);
+    font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: all .15s; background: var(--surface2); color: var(--text);
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+  .btn-primary:hover { background: #79b9ff; color: #0d1117; border-color: #79b9ff; }
+
+  /* ── Table ── */
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; padding: 9px 14px;
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 11px 14px; font-size: 13px;
+    border-bottom: 1px solid rgba(48,54,61,.5);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .mono { font-family: 'DM Mono', monospace; font-size: 12px; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .badge-present { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge-late    { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .badge-absent  { background: rgba(248,81,73,.15);  color: var(--red); }
+  .badge-half    { background: rgba(188,140,255,.15); color: var(--purple); }
+  .badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* ── Misc ── */
+  .empty {
+    text-align: center; padding: 48px; color: var(--muted);
+    font-size: 13px;
+  }
+  .loading { text-align: center; padding: 32px; color: var(--muted); }
+  .error-msg {
+    background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
+    color: var(--red); padding: 12px 16px; border-radius: 8px;
+    margin-bottom: 16px; font-size: 13px;
+  }
+  .pages { display: none; }
+  .pages.active { display: block; }
+  .api-cfg {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 20px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    font-size: 12px;
+  }
+  .api-cfg label { color: var(--muted); }
+  .api-cfg input { flex: 1; min-width: 200px; font-family: 'DM Mono', monospace; font-size: 12px; }
+  .chip {
+    display: inline-block; background: rgba(88,166,255,.12); color: var(--accent);
+    border-radius: 4px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size: 11px;
+  }
+  .server-status { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">
+    <div class="logo-text">AttendanceOS</div>
+    <div class="logo-sub">eSSL F18 Integration</div>
+  </div>
+  <div class="nav">
+    <div class="nav-section">Main</div>
+    <button class="nav-item active" data-page="overview" onclick="nav(this,'overview')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Overview
+    </button>
+    <button class="nav-item" data-page="today" onclick="nav(this,'today')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Today
+    </button>
+    <button class="nav-item" data-page="report" onclick="nav(this,'report')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Reports
+    </button>
+    <div class="nav-section">System</div>
+    <button class="nav-item" data-page="employees" onclick="nav(this,'employees')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Employees
+    </button>
+    <button class="nav-item" data-page="devices" onclick="nav(this,'devices')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Devices
+    </button>
+    <button class="nav-item" data-page="settings" onclick="nav(this,'settings')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 0 0 4.93 19.07M19.07 4.93A10 10 0 0 1 4.93 19.07"/></svg>
+      Settings
+    </button>
+  </div>
+  <div class="sidebar-footer">
+    <span class="status-dot" id="serverDot"></span>
+    <span id="serverStatus">Connecting…</span>
+  </div>
+</nav>
+
+<!-- ── Main ───────────────────────────────────────────────────────── -->
+<main class="main">
+
+  <!-- API config bar -->
+  <div class="api-cfg" id="apiBar">
+    <label>API Base URL</label>
+    <input type="text" id="apiBase" value="http://10.0.1.176:8000" placeholder="http://10.0.1.176:8000"/>
+    <label>API Key</label>
+    <input type="text" id="apiKey" value="12345SECRET" placeholder="your-api-key" style="max-width:180px"/>
+    <button class="btn btn-primary" onclick="connect()">Connect</button>
+    <span class="server-status" id="serverInfo"></span>
+  </div>
+
+  <div id="errorBanner"></div>
+
+  <!-- ── Overview page ── -->
+  <div class="pages active" id="page-overview">
+    <div class="topbar">
+      <div>
+        <div class="page-title">Overview</div>
+        <div class="page-sub" id="overviewDate">Loading…</div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-primary" onclick="loadOverview()">Refresh</button>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card s-green">
+        <div class="stat-label">Present</div>
+        <div class="stat-value c-green" id="s-present">—</div>
+        <div class="stat-footer">On time today</div>
+      </div>
+      <div class="stat-card s-yellow">
+        <div class="stat-label">Late</div>
+        <div class="stat-value c-yellow" id="s-late">—</div>
+        <div class="stat-footer">Late arrivals</div>
+      </div>
+      <div class="stat-card s-red">
+        <div class="stat-label">Absent</div>
+        <div class="stat-value c-red" id="s-absent">—</div>
+        <div class="stat-footer">Not punched in</div>
+      </div>
+      <div class="stat-card s-purple">
+        <div class="stat-label">Half Day</div>
+        <div class="stat-value c-purple" id="s-half">—</div>
+        <div class="stat-footer">Under 4 hours</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">7-Day Trend</span></div>
+        <div class="panel-body">
+          <canvas id="trendChart" height="160"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Today's Attendance</span></div>
+        <div class="panel-body" style="padding:0">
+          <div class="tbl-wrap">
+            <table id="overviewTable">
+              <thead><tr><th>Name</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+              <tbody id="overviewBody"><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Today page ── -->
+  <div class="pages" id="page-today">
+    <div class="topbar">
+      <div><div class="page-title">Today's Attendance</div></div>
+      <div class="topbar-right">
+        <button class="btn btn-primary" onclick="loadToday()">Refresh</button>
+        <button class="btn" onclick="exportCSV('today')">Export CSV</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title" id="todayTitle">—</span>
+        <div class="controls">
+          <input type="text" id="todaySearch" placeholder="Search name / ID…" oninput="filterTable('todayBody',this.value)" style="width:200px"/>
+          <select id="todayFilter" onchange="filterByStatus('todayBody',this.value)">
+            <option value="">All Status</option>
+            <option>PRESENT</option><option>LATE</option>
+            <option>ABSENT</option><option>HALF_DAY</option>
+          </select>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>EMP ID</th><th>Name</th><th>Date</th>
+            <th>Punch In</th><th>Punch Out</th>
+            <th>Hours</th><th>Status</th><th>Late (min)</th>
+          </tr></thead>
+          <tbody id="todayBody"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Reports page ── -->
+  <div class="pages" id="page-report">
+    <div class="topbar">
+      <div><div class="page-title">Attendance Report</div></div>
+      <button class="btn" onclick="exportCSV('report')">Export CSV</button>
+    </div>
+    <div class="panel" style="margin-bottom:18px">
+      <div class="panel-body">
+        <div class="controls">
+          <label style="color:var(--muted);font-size:12px">From</label>
+          <input type="date" id="rStart"/>
+          <label style="color:var(--muted);font-size:12px">To</label>
+          <input type="date" id="rEnd"/>
+          <input type="text" id="rEmpId" placeholder="EMP ID (optional)" style="width:150px"/>
+          <select id="rStatus">
+            <option value="">All Status</option>
+            <option>PRESENT</option><option>LATE</option>
+            <option>ABSENT</option><option>HALF_DAY</option>
+          </select>
+          <button class="btn btn-primary" onclick="loadReport()">Generate</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title" id="reportTitle">Select date range above</span>
+        <input type="text" id="reportSearch" placeholder="Search…" oninput="filterTable('reportBody',this.value)" style="width:180px"/>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>EMP ID</th><th>Name</th><th>Date</th>
+            <th>Punch In</th><th>Punch Out</th>
+            <th>Hours</th><th>Status</th><th>Late (min)</th>
+          </tr></thead>
+          <tbody id="reportBody"><tr><td colspan="8" class="empty">Run a report to see results.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Employees page ── -->
+  <div class="pages" id="page-employees">
+    <div class="topbar">
+      <div><div class="page-title">Employees</div></div>
+      <button class="btn btn-primary" onclick="loadEmployees()">Refresh</button>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title" id="empCount">—</span>
+        <input type="text" placeholder="Search…" oninput="filterTable('empBody',this.value)" style="width:200px"/>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Device ID</th><th>Name</th><th>Code</th>
+            <th>Department</th><th>Shift Start</th><th>Shift End</th>
+          </tr></thead>
+          <tbody id="empBody"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Devices page ── -->
+  <div class="pages" id="page-devices">
+    <div class="topbar">
+      <div><div class="page-title">Devices</div></div>
+      <button class="btn btn-primary" onclick="loadDevices()">Refresh</button>
+    </div>
+    <div class="panel">
+      <div class="panel-body" id="deviceList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ── Settings page ── -->
+  <div class="pages" id="page-settings">
+    <div class="topbar"><div><div class="page-title">Settings</div></div></div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Connection</span></div>
+      <div class="panel-body">
+        <div style="display:grid;gap:14px;max-width:480px">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px">API Base URL</label>
+            <input type="text" id="setBase" style="width:100%" placeholder="http://10.0.1.176:8000"/>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px">API Key</label>
+            <input type="text" id="setKey" style="width:100%" placeholder="your-secret-key"/>
+          </div>
+          <button class="btn btn-primary" style="width:120px" onclick="saveSettings()">Save & Connect</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-head"><span class="panel-title">Actions</span></div>
+      <div class="panel-body">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" onclick="apiAction('recompute')">Recompute All Attendance</button>
+          <button class="btn" onclick="syncEmployees()">Sync Employees from Device</button>
+        </div>
+        <div id="actionResult" style="margin-top:12px;font-size:12px;color:var(--muted)"></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+let API = localStorage.getItem('api_base') || 'http://10.0.1.176:8000';
+let KEY = localStorage.getItem('api_key')  || '12345SECRET';
+document.getElementById('apiBase').value = API;
+document.getElementById('apiKey').value  = KEY;
+document.getElementById('setBase').value = API;
+document.getElementById('setKey').value  = KEY;
+
+// Set default date inputs
+const today = new Date().toISOString().slice(0,10);
+const week  = new Date(Date.now() - 6*86400000).toISOString().slice(0,10);
+document.getElementById('rStart').value = week;
+document.getElementById('rEnd').value   = today;
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+async function api(path, opts={}) {
+  const r = await fetch(API + path, {
+    headers: { 'X-API-Key': KEY, 'Content-Type': 'application/json', ...opts.headers },
+    ...opts,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+function showError(msg) {
+  document.getElementById('errorBanner').innerHTML =
+    msg ? `<div class="error-msg">${msg}</div>` : '';
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────────
+function nav(el, page) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.pages').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('page-' + page).classList.add('active');
+  showError('');
+  const loaders = {
+    overview: loadOverview, today: loadToday,
+    employees: loadEmployees, devices: loadDevices,
+  };
+  if (loaders[page]) loaders[page]();
+}
+
+// ── Connect / status ──────────────────────────────────────────────────────────
+async function connect() {
+  API = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  KEY = document.getElementById('apiKey').value.trim();
+  localStorage.setItem('api_base', API);
+  localStorage.setItem('api_key',  KEY);
+  document.getElementById('setBase').value = API;
+  document.getElementById('setKey').value  = KEY;
+  await checkServer();
+  loadOverview();
+}
+
+async function checkServer() {
+  const dot  = document.getElementById('serverDot');
+  const stat = document.getElementById('serverStatus');
+  const info = document.getElementById('serverInfo');
+  try {
+    const r = await fetch(API + '/health');
+    if (r.ok) {
+      dot.className  = 'status-dot dot-green';
+      stat.textContent = 'Connected';
+      info.textContent = `${API}`;
+    } else throw new Error();
+  } catch {
+    dot.className  = 'status-dot dot-red';
+    stat.textContent = 'Offline';
+    info.textContent = 'Cannot reach server';
+  }
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+let trendChart = null;
+async function loadOverview() {
+  showError('');
+  try {
+    const [sum, trend, att] = await Promise.all([
+      api('/api/dashboard/summary'),
+      api('/api/dashboard/trend?days=7'),
+      api('/api/attendance/today'),
+    ]);
+    document.getElementById('overviewDate').textContent = `Today — ${sum.date}`;
+    document.getElementById('s-present').textContent = sum.today.present;
+    document.getElementById('s-late').textContent    = sum.today.late;
+    document.getElementById('s-absent').textContent  = sum.today.absent;
+    document.getElementById('s-half').textContent    = sum.today.half_day;
+
+    // Trend chart
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: trend.map(d => d.date.slice(5)),
+        datasets: [
+          { label:'Present', data: trend.map(d=>d.present), borderColor:'#3fb950',
+            backgroundColor:'rgba(63,185,80,.08)', tension:.4, fill:true, pointRadius:3 },
+          { label:'Late', data: trend.map(d=>d.late), borderColor:'#d29922',
+            backgroundColor:'transparent', tension:.4, pointRadius:3 },
+          { label:'Absent', data: trend.map(d=>d.absent), borderColor:'#f85149',
+            backgroundColor:'transparent', tension:.4, pointRadius:3, borderDash:[4,3] },
+        ],
+      },
+      options: {
+        plugins:{ legend:{ labels:{ color:'#8b949e', font:{size:11}, boxWidth:12 }}},
+        scales:{
+          x:{ ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'rgba(48,54,61,.5)'} },
+          y:{ ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'rgba(48,54,61,.5)'},
+              beginAtZero:true },
+        },
+      },
+    });
+
+    // Mini table
+    const tbody = document.getElementById('overviewBody');
+    if (!att.length) { tbody.innerHTML='<tr><td colspan="4" class="empty">No data for today</td></tr>'; return; }
+    tbody.innerHTML = att.slice(0,15).map(r =>
+      `<tr>
+        <td>${r.EMP_Name}</td>
+        <td class="mono">${r.PUNCH_IN}</td>
+        <td class="mono">${r.PUNCH_OUT}</td>
+        <td>${badge(r.STATUS)}</td>
+      </tr>`
+    ).join('');
+  } catch(e) { showError('Failed to load overview: ' + e.message); }
+}
+
+// ── Today ──────────────────────────────────────────────────────────────────────
+let todayData = [];
+async function loadToday() {
+  showError('');
+  try {
+    todayData = await api('/api/attendance/today');
+    document.getElementById('todayTitle').textContent =
+      `${todayData.length} records — ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}`;
+    renderAttTable('todayBody', todayData);
+  } catch(e) { showError('Failed to load today: ' + e.message); }
+}
+
+// ── Report ─────────────────────────────────────────────────────────────────────
+let reportData = [];
+async function loadReport() {
+  showError('');
+  const s = document.getElementById('rStart').value;
+  const e = document.getElementById('rEnd').value;
+  const emp = document.getElementById('rEmpId').value.trim();
+  const st  = document.getElementById('rStatus').value;
+  if (!s || !e) { showError('Please select start and end date.'); return; }
+  try {
+    let url = `/api/attendance/summary?start_date=${s}&end_date=${e}`;
+    if (emp) url += `&employee_id=${emp}`;
+    if (st)  url += `&status=${st}`;
+    reportData = await api(url);
+    document.getElementById('reportTitle').textContent =
+      `${reportData.length} records from ${s} to ${e}`;
+    renderAttTable('reportBody', reportData);
+  } catch(e2) { showError('Failed to load report: ' + e2.message); }
+}
+
+// ── Render attendance rows ─────────────────────────────────────────────────────
+function renderAttTable(tbodyId, data) {
+  const tbody = document.getElementById(tbodyId);
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No records found.</td></tr>';
+    tbody.dataset.rows = '';
+    return;
+  }
+  tbody.dataset.rows = JSON.stringify(data);
+  tbody.innerHTML = data.map(r =>
+    `<tr data-search="${(r.EMP_Name+r.EMP_ID+r.STATUS).toLowerCase()}">
+      <td class="mono">${r.EMP_ID}</td>
+      <td>${r.EMP_Name}</td>
+      <td class="mono">${r.DATE}</td>
+      <td class="mono" style="color:var(--green)">${r.PUNCH_IN}</td>
+      <td class="mono" style="color:var(--muted)">${r.PUNCH_OUT}</td>
+      <td class="mono">${r.TOTAL_HRS != null ? r.TOTAL_HRS+'h' : '—'}</td>
+      <td>${badge(r.STATUS)}</td>
+      <td class="mono">${r.IS_LATE ? '<span style="color:var(--yellow)">'+r.LATE_MIN+'</span>' : '0'}</td>
+    </tr>`
+  ).join('');
+}
+
+// ── Employees ──────────────────────────────────────────────────────────────────
+async function loadEmployees() {
+  showError('');
+  try {
+    const emps = await api('/api/employees');
+    document.getElementById('empCount').textContent = `${emps.length} employees`;
+    const tbody = document.getElementById('empBody');
+    tbody.innerHTML = emps.map(e =>
+      `<tr data-search="${(e.name+e.device_user_id+e.department).toLowerCase()}">
+        <td class="mono">${e.device_user_id}</td>
+        <td>${e.name}</td>
+        <td class="mono">${e.employee_code || '—'}</td>
+        <td>${e.department || '—'}</td>
+        <td class="mono">${e.shift_start || '09:00'}</td>
+        <td class="mono">${e.shift_end   || '18:00'}</td>
+      </tr>`
+    ).join('') || '<tr><td colspan="6" class="empty">No employees found.</td></tr>';
+  } catch(e) { showError('Failed to load employees: ' + e.message); }
+}
+
+// ── Devices ────────────────────────────────────────────────────────────────────
+async function loadDevices() {
+  showError('');
+  try {
+    const devs = await api('/api/devices');
+    const el = document.getElementById('deviceList');
+    el.innerHTML = devs.map(d => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:12px;display:flex;gap:20px;align-items:center">
+        <div style="flex:1">
+          <div style="font-weight:600;margin-bottom:4px">${d.name}</div>
+          <div style="font-size:12px;color:var(--muted)">${d.location || 'No location'}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="chip">${d.serial}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">${d.ip || 'No IP'}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:var(--muted)">Last seen</div>
+          <div style="font-size:12px">${d.last_seen ? new Date(d.last_seen).toLocaleString('en-IN') : 'Never'}</div>
+        </div>
+      </div>`
+    ).join('') || '<div class="empty">No devices registered.</div>';
+  } catch(e) { showError('Failed to load devices: ' + e.message); }
+}
+
+// ── Settings actions ──────────────────────────────────────────────────────────
+function saveSettings() {
+  document.getElementById('apiBase').value = document.getElementById('setBase').value;
+  document.getElementById('apiKey').value  = document.getElementById('setKey').value;
+  connect();
+}
+
+async function apiAction(type) {
+  const el = document.getElementById('actionResult');
+  el.textContent = 'Running…';
+  try {
+    if (type === 'recompute') {
+      const r = await api('/api/attendance/recompute', { method:'POST' });
+      el.textContent = `Done: ${r.recomputed} employee-day pairs recomputed.`;
+    }
+  } catch(e) { el.textContent = 'Error: ' + e.message; }
+}
+
+async function syncEmployees() {
+  const serial = prompt('Enter device serial number:', 'CQQC232460300');
+  if (!serial) return;
+  const el = document.getElementById('actionResult');
+  el.textContent = 'Syncing employees from device…';
+  try {
+    const r = await api(`/api/devices/${serial}/sync-employees`, { method:'POST' });
+    el.textContent = `Synced: ${r.created} created, ${r.updated} updated, ${r.skipped} skipped.`;
+    loadEmployees();
+  } catch(e) { el.textContent = 'Error: ' + e.message; }
+}
+
+// ── Filter / search ───────────────────────────────────────────────────────────
+function filterTable(tbodyId, q) {
+  document.querySelectorAll(`#${tbodyId} tr[data-search]`).forEach(tr => {
+    tr.style.display = tr.dataset.search.includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+function filterByStatus(tbodyId, status) {
+  document.querySelectorAll(`#${tbodyId} tr[data-search]`).forEach(tr => {
+    tr.style.display = (!status || tr.dataset.search.includes(status.toLowerCase())) ? '' : 'none';
+  });
+}
+
+// ── CSV Export ────────────────────────────────────────────────────────────────
+function exportCSV(source) {
+  const data = source === 'today' ? todayData : reportData;
+  if (!data.length) { alert('No data to export.'); return; }
+  const cols = ['EMP_ID','EMP_Name','DATE','PUNCH_IN','PUNCH_OUT','TOTAL_HRS','STATUS','IS_LATE','LATE_MIN'];
+  const csv  = [cols.join(','), ...data.map(r => cols.map(c => `"${r[c]??''}"`).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = `attendance_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── Badge helper ──────────────────────────────────────────────────────────────
+function badge(status) {
+  const map = {
+    PRESENT: 'badge-present', LATE: 'badge-late',
+    ABSENT: 'badge-absent', HALF_DAY: 'badge-half',
+  };
+  return `<span class="badge ${map[status]||'badge-absent'}">
+    <span class="badge-dot"></span>${status||'ABSENT'}</span>`;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+checkServer();
+loadOverview();
+</script>
+</body>
+</html>
