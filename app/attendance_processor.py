@@ -1,15 +1,16 @@
 # app/attendance_processor.py
 """
-All datetimes stored/compared as naive UTC (SQLite limitation).
+All datetimes stored/compared as naive UTC (DB storage convention).
 IST conversion happens only in _fmt_ist() for display.
 
-Bug fixes in this version
+Production fixes applied
 --------------------------
-1. Single punch: last_out is now None (not same as first_in).
-   The same punch was being used for both IN and OUT — fixed.
-2. recompute_today(): processes ALL of today's raw punches that have
-   no attendance_summary entry yet. Called by /api/attendance/today
-   before querying, so new punches are always included.
+C3: save_punches() uses begin_nested() savepoints — duplicates no longer
+    roll back previously saved records.
+C4: Day-boundary queries use IST-adjusted UTC ranges — punches are now
+    correctly attributed to the IST calendar date.
+H4: recompute_today() uses explicit set logic instead of fragile set
+    arithmetic.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
 
 
 def _fmt_ist(dt: datetime | None) -> str | None:
-    """Naive-UTC → IST HH:MM string.  e.g. 03:36 UTC → 09:06 IST"""
+    """Naive-UTC -> IST HH:MM string.  e.g. 03:36 UTC -> 09:06 IST"""
     if dt is None:
         return None
     return (_to_naive_utc(dt) + IST_OFFSET).strftime("%H:%M")
@@ -54,6 +55,22 @@ def _today_ist() -> date:
     return datetime.now(timezone(IST_OFFSET)).date()
 
 
+def _ist_day_bounds_utc(work_date: date) -> tuple[datetime, datetime]:
+    """
+    C4 FIX: Convert an IST calendar date into naive-UTC datetime bounds.
+
+    IST midnight = UTC previous day 18:30
+    IST 23:59:59 = UTC same day 18:29:59
+
+    Example: work_date = 2026-04-13 (IST)
+      day_start = 2026-04-12 18:30:00 (UTC)
+      day_end   = 2026-04-13 18:29:59.999999 (UTC)
+    """
+    day_start = datetime.combine(work_date, time.min) - IST_OFFSET
+    day_end = datetime.combine(work_date, time.max) - IST_OFFSET
+    return day_start, day_end
+
+
 # ── Save punches ──────────────────────────────────────────────────────────────
 
 async def save_punches(
@@ -62,23 +79,28 @@ async def save_punches(
     punches: list[ParsedPunch],
     source: str = "ADMS",
 ) -> tuple[int, int]:
+    """
+    C3 FIX: Each insert is wrapped in begin_nested() (savepoint).
+    A duplicate punch only rolls back its own savepoint, not the whole session.
+    Previously, db.rollback() on any duplicate would undo ALL prior inserts.
+    """
     saved = duplicates = 0
     for punch in punches:
         punch_time_utc = _to_naive_utc(punch.punch_time)
         try:
-            db.add(RawPunchLog(
-                device_serial=device_serial,
-                employee_device_id=punch.employee_id,
-                punch_time=punch_time_utc,
-                status=punch.status,
-                verify_type=punch.verify_type,
-                raw_payload=punch.raw_line,
-                source=source,
-            ))
-            await db.flush()
+            async with db.begin_nested():
+                db.add(RawPunchLog(
+                    device_serial=device_serial,
+                    employee_device_id=punch.employee_id,
+                    punch_time=punch_time_utc,
+                    status=punch.status,
+                    verify_type=punch.verify_type,
+                    raw_payload=punch.raw_line,
+                    source=source,
+                ))
+                await db.flush()
             saved += 1
         except Exception as exc:
-            await db.rollback()
             err = str(exc).upper()
             if "UNIQUE" in err or "INTEGRITY" in err or "DUPLICATE" in err:
                 duplicates += 1
@@ -94,8 +116,8 @@ def _compute_daily(emp: Employee, work_date: date, punches: list[RawPunchLog]) -
     Compute attendance fields from a list of punches for one employee on one day.
 
     RULE: First punch = PUNCH-IN. Last punch = PUNCH-OUT.
-          If only 1 punch exists → punch_out is None (unknown departure).
-          If 0 punches → ABSENT.
+          If only 1 punch exists -> punch_out is None (unknown departure).
+          If 0 punches -> ABSENT.
     """
     result = dict(
         first_in=None, last_out=None, total_minutes=None,
@@ -110,9 +132,7 @@ def _compute_daily(emp: Employee, work_date: date, punches: list[RawPunchLog]) -
 
     first_in = _to_naive_utc(srt[0].punch_time)
 
-    # ── FIX 1: single punch → punch_out is None, NOT the same as punch_in ──
-    # Previously srt[-1] on a 1-element list returns the same element as srt[0],
-    # causing IN == OUT. Now last_out is only set when there are ≥ 2 punches.
+    # Single punch -> punch_out is None, NOT the same as punch_in
     if len(srt) >= 2:
         last_out = _to_naive_utc(srt[-1].punch_time)
     else:
@@ -167,12 +187,11 @@ async def recompute_daily(
     )).scalar_one_or_none()
 
     if emp is None:
-        logger.warning("No Employee for device_user_id=%s — sync employees first", employee_device_id)
+        logger.warning("No Employee for device_user_id=%s -- sync employees first", employee_device_id)
         return None
 
-    # Naive UTC day boundaries (punches stored as naive UTC)
-    day_start = datetime.combine(work_date, time.min)
-    day_end   = datetime.combine(work_date, time.max)
+    # C4 FIX: Use IST-adjusted UTC boundaries instead of raw UTC midnight
+    day_start, day_end = _ist_day_bounds_utc(work_date)
 
     punches: Sequence[RawPunchLog] = (await db.execute(
         select(RawPunchLog)
@@ -222,7 +241,7 @@ async def recompute_daily(
     summ.employee_id  = emp.id
     summ.emp_name     = emp.name
     summ.punch_in     = _fmt_ist(daily["first_in"])
-    summ.punch_out    = _fmt_ist(daily["last_out"])   # None → "--:--" in API layer
+    summ.punch_out    = _fmt_ist(daily["last_out"])   # None -> "--:--" in API layer
     summ.is_late      = daily["is_late"]
     summ.late_minutes = daily["late_minutes"]
     summ.total_hours  = round(daily["total_minutes"] / 60, 2) if daily["total_minutes"] else None
@@ -239,7 +258,8 @@ async def recompute_daily(
 
 async def recompute_today(db: AsyncSession) -> int:
     """
-    FIX 2: Find every (employee, date) pair for TODAY that either:
+    H4 FIX: Uses explicit loop instead of fragile set arithmetic.
+    Finds every (employee, date) pair for TODAY that either:
       a) has no attendance_summary row yet, OR
       b) has raw punches added since the last summary update (is_processed=False)
 
@@ -250,9 +270,8 @@ async def recompute_today(db: AsyncSession) -> int:
     """
     today = _today_ist()
 
-    # Day boundaries in naive UTC
-    day_start = datetime.combine(today, time.min)
-    day_end   = datetime.combine(today, time.max)
+    # C4 FIX: Use IST-adjusted UTC boundaries
+    day_start, day_end = _ist_day_bounds_utc(today)
 
     # All distinct employee IDs that have ANY punch today
     all_today = (await db.execute(
@@ -279,13 +298,16 @@ async def recompute_today(db: AsyncSession) -> int:
         .where(
             RawPunchLog.punch_time >= day_start,
             RawPunchLog.punch_time <= day_end,
-            RawPunchLog.is_processed == False,   # noqa: E712
+            RawPunchLog.is_processed.is_(False),
         )
         .distinct()
     )).scalars().all())
 
-    # Process: missing from summary OR has new punches
-    to_process = set(all_today) - (have_summary - have_unprocessed)
+    # H4 FIX: Explicit logic — process if missing from summary OR has new punches
+    to_process = set()
+    for emp_id in all_today:
+        if emp_id not in have_summary or emp_id in have_unprocessed:
+            to_process.add(emp_id)
 
     if not to_process:
         logger.debug("recompute_today: all %d employees already up to date", len(have_summary))
@@ -320,36 +342,37 @@ async def reprocess_all_pending(db: AsyncSession) -> int:
     """
     Recompute attendance_summary for every (employee, date) pair in raw_punch_logs.
     Use after: syncing employees, pulling historical data, or fixing bad records.
+
+    FIX: Computes IST dates in Python instead of SQL func.date() which returns
+    UTC dates. This prevents wrong day-attribution for punches between
+    00:00-05:30 UTC (which are previous-day IST).
     """
-    rows = (await db.execute(
-        select(
-            RawPunchLog.employee_device_id,
-            func.date(RawPunchLog.punch_time).label("work_date"),
-        ).distinct()
+    all_punches = (await db.execute(
+        select(RawPunchLog.employee_device_id, RawPunchLog.punch_time)
     )).all()
 
-    if not rows:
+    if not all_punches:
         logger.info("reprocess_all_pending: no records found")
         return 0
 
-    logger.info("reprocess_all_pending: %d employee-date pairs to process", len(rows))
+    # Group by (employee, IST date) in Python for correctness
+    pairs: set[tuple[str, date]] = set()
+    for emp_id, pt in all_punches:
+        if pt is not None:
+            ist_date = _ist_date_for(pt)
+            pairs.add((emp_id, ist_date))
+
+    logger.info("reprocess_all_pending: %d employee-date pairs to process", len(pairs))
     count = errors = 0
 
-    for row in rows:
-        wd = row.work_date
-        if isinstance(wd, str):
-            try:
-                wd = date.fromisoformat(wd)
-            except ValueError:
-                continue
+    for emp_id, wd in pairs:
         try:
-            rec = await recompute_daily(db, row.employee_device_id, wd)
+            rec = await recompute_daily(db, emp_id, wd)
             if rec:
                 count += 1
         except Exception as exc:
             errors += 1
-            logger.error("recompute_daily failed emp=%s date=%s: %s",
-                         row.employee_device_id, wd, exc)
+            logger.error("recompute_daily failed emp=%s date=%s: %s", emp_id, wd, exc)
 
     await db.commit()
     logger.info("reprocess_all_pending: %d ok, %d errors", count, errors)

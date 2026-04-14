@@ -1,25 +1,28 @@
 # app/device_logger.py
 """
-Raw Device Request Logger - Windows-safe (ASCII only)
+Raw Device Request Logger -- Windows-safe (ASCII only)
+
+L8 FIX: Uses a cleaner body-caching approach and reads from config
+instead of os.getenv directly.
 """
 from __future__ import annotations
+
 import logging
-import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-logger = logging.getLogger("device_logger")
+from app.config import settings
 
-LOG_DEVICE_REQUESTS = os.getenv("LOG_DEVICE_REQUESTS", "true").lower() == "true"
+logger = logging.getLogger("device_logger")
 
 _SKIP_PATHS = {"/docs", "/openapi.json", "/redoc", "/health", "/favicon.ico"}
 
 
 class DeviceRequestLoggerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        if not LOG_DEVICE_REQUESTS or request.url.path in _SKIP_PATHS:
+        if not settings.log_device_requests or request.url.path in _SKIP_PATHS:
             return await call_next(request)
 
         raw_body = await request.body()
@@ -56,10 +59,13 @@ class DeviceRequestLoggerMiddleware(BaseHTTPMiddleware):
             )
 
             if not sn and body_text:
-                for part in body_text.split("&"):
+                # Only check the first line for SN (metadata, not tab-delimited data)
+                first_line = body_text.split("\n", 1)[0]
+                for part in first_line.split("&"):
                     if part.strip().upper().startswith("SN="):
                         logger.warning("  SN found in BODY: %s", part.strip())
 
+        # L8: Re-inject the cached body so downstream handlers can read it
         async def receive():
             return {"type": "http.request", "body": raw_body, "more_body": False}
 

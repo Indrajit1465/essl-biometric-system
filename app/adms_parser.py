@@ -15,7 +15,7 @@ Fields in each tab-delimited record:
     user_id    — employee ID as enrolled on device (use this for matching)
     timestamp  — YYYY-MM-DD HH:MM:SS
     status     — 0=Check-In, 1=Check-Out, 2=Break-Out, 3=Break-In, 4=OT-In, 5=OT-Out
-    verify     — 1=FP, 3=Password, 11=Face, 15=Palm, 200=RFID Card
+    verify     — 1=FP, 3=Password, 11=Face, 15=Palm, 200=RFID Card, 255=Card/Other
     workcode   — configurable (0 = no code)
 
 The device also sends:
@@ -46,12 +46,14 @@ PUNCH_STATUS = {
     5: "OT_OUT",
 }
 
+# M11: Added 255 mapping — common on eSSL F18 devices
 VERIFY_TYPE = {
     1:   "FINGERPRINT",
     3:   "PASSWORD",
     11:  "FACE",
     15:  "PALM",
     200: "RFID_CARD",
+    255: "CARD_OTHER",
 }
 
 
@@ -136,14 +138,19 @@ def parse_adms_body(
     lines = raw_body.strip().splitlines()
     for line_no, line in enumerate(lines, start=1):
         line = line.strip()
-        if not line or "=" in line.split("\t")[0]:
-            # Skip the metadata header line (contains key=value pairs)
+        if not line:
+            continue
+
+        # L7 FIX: Only skip lines that start with key=value pairs (metadata header)
+        # Check if the first field (before any tab) contains '='
+        first_field = line.split("\t")[0] if "\t" in line else line
+        if "=" in first_field and not first_field[0].isdigit():
             continue
 
         parts = line.split("\t")
         if len(parts) < 4:
             payload.parse_errors.append(
-                f"Line {line_no}: expected ≥4 tab-separated fields, got {len(parts)}: {line!r}"
+                f"Line {line_no}: expected >=4 tab-separated fields, got {len(parts)}: {line!r}"
             )
             continue
 
@@ -159,7 +166,7 @@ def parse_adms_body(
             )
             payload.punches.append(punch)
         except (ValueError, IndexError) as exc:
-            payload.parse_errors.append(f"Line {line_no}: {exc} → {line!r}")
+            payload.parse_errors.append(f"Line {line_no}: {exc} -> {line!r}")
             logger.warning("ADMS parse error on device %s line %d: %s", serial, line_no, exc)
 
     if payload.parse_errors:
@@ -181,11 +188,11 @@ def build_handshake_response(
 
     Critical fields
     ---------------
-    ATTLOGStamp=9999  → Send ALL buffered attendance logs on connect.
+    ATTLOGStamp=9999  -> Send ALL buffered attendance logs on connect.
                         After you've done initial sync, set this to the last
                         Stamp value returned by the device so it only sends new records.
-    Delay=N           → Device pushes new punches within N seconds of the event.
-    TransInterval=N   → Bulk sync every N minutes.
+    Delay=N           -> Device pushes new punches within N seconds of the event.
+    TransInterval=N   -> Bulk sync every N minutes.
     """
     tz_sign = "+" if device_tz >= 0 else "-"
     tz_hours = int(abs(device_tz))

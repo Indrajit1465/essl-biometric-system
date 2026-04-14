@@ -1,18 +1,18 @@
 # app/routers/adms.py
 """
-ADMS Push Receiver — eSSL F18 (No Custom Path) Edition
+ADMS Push Receiver -- eSSL F18 (No Custom Path) Edition
 =======================================================
 
 eSSL F18 firmware (confirmed: no path field on device screen)
 hardcodes these paths. Server handles ALL variants:
 
-  GET  /iclock/cdata          ← standard ADMS handshake
-  POST /iclock/cdata          ← standard ADMS push
-  GET  /iclock/gateway.fcgi   ← older eSSL firmware variant
-  POST /iclock/gateway.fcgi   ← older eSSL firmware variant
-  GET  /                      ← F18 root-only firmware (no path field)
-  POST /                      ← F18 root-only firmware (no path field)
-  POST /iclock/devicecmd      ← command acknowledgements
+  GET  /iclock/cdata          <- standard ADMS handshake
+  POST /iclock/cdata          <- standard ADMS push
+  GET  /iclock/gateway.fcgi   <- older eSSL firmware variant
+  POST /iclock/gateway.fcgi   <- older eSSL firmware variant
+  GET  /                      <- F18 root-only firmware (no path field)
+  POST /                      <- F18 root-only firmware (no path field)
+  POST /iclock/devicecmd      <- command acknowledgements
 
 All paths share the same two core handlers (_handle_get / _handle_post)
 so there is zero logic duplication.
@@ -35,6 +35,9 @@ from app.attendance_processor import recompute_daily, save_punches
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ADMS Device"])
 
+# Known eSSL device user-agent fragments
+_DEVICE_UA_FRAGMENTS = {"zk", "iface", "bw", "essl", "iclock"}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,8 +49,12 @@ async def _get_or_create_device(db: AsyncSession, serial: str, client_ip: str = 
         device = Device(serial_number=serial, name=f"eSSL-{serial[:8]}", ip_address=client_ip)
         db.add(device)
         logger.info("Auto-registered new device SN=%s ip=%s", serial, client_ip)
-    elif client_ip and device.ip_address != client_ip:
-        device.ip_address = client_ip
+
+    # FIX: Do NOT overwrite ip_address from ADMS push requests.
+    # The ADMS source IP (client_ip) may differ from the device's direct IP
+    # (behind NAT, proxy, or localhost testing). The device's pull IP should
+    # only be set manually via POST /api/devices.
+    # We just update last_seen_at to track connectivity.
 
     device.last_seen_at = datetime.now(timezone.utc)
     await db.flush()
@@ -57,10 +64,14 @@ async def _get_or_create_device(db: AsyncSession, serial: str, client_ip: str = 
 def _extract_sn(request: Request, body_text: str = "") -> str:
     """
     Extract serial number from query params (standard) or body (some F18 firmware).
+    L7 FIX: Only parse key=value pairs from the first line of the body,
+    not from tab-separated attendance data.
     """
     sn = request.query_params.get("SN", "").strip()
     if not sn and body_text:
-        for part in body_text.replace("\n", "&").split("&"):
+        # Only check the first line for SN= (metadata line, not data)
+        first_line = body_text.strip().split("\n", 1)[0]
+        for part in first_line.split("&"):
             if part.strip().upper().startswith("SN="):
                 sn = part.strip()[3:].strip()
                 break
@@ -74,8 +85,25 @@ def _is_allowed(serial: str) -> bool:
 
 
 def _looks_like_device(request: Request) -> bool:
+    """
+    M1 FIX: More robust device detection using known UA fragments and SN param.
+    """
+    # If SN param is present, it's definitely a device
+    if request.query_params.get("SN"):
+        return True
+
     ua = request.headers.get("user-agent", "").lower()
-    return len(ua) < 30 or "mozilla" not in ua
+
+    # Check known eSSL device user-agent fragments
+    for frag in _DEVICE_UA_FRAGMENTS:
+        if frag in ua:
+            return True
+
+    # Fallback: very short UA and no browser indicators
+    if len(ua) < 30 and "mozilla" not in ua and "chrome" not in ua:
+        return True
+
+    return False
 
 
 # ── Core GET handler (handshake) ──────────────────────────────────────────────
@@ -87,7 +115,7 @@ async def _handle_get(request: Request, db: AsyncSession) -> Response:
     logger.info("[HANDSHAKE] SN=%s  path=%s  ip=%s", serial, request.url.path, client_ip)
 
     if not _is_allowed(serial):
-        logger.warning("[HANDSHAKE] REJECTED — SN=%s not in allowlist", serial)
+        logger.warning("[HANDSHAKE] REJECTED -- SN=%s not in allowlist", serial)
         return Response(status_code=403, content="Unauthorized")
 
     await _get_or_create_device(db, serial, client_ip)
@@ -97,6 +125,9 @@ async def _handle_get(request: Request, db: AsyncSession) -> Response:
         device_tz=settings.DEVICE_TIMEZONE,
     )
     logger.debug("[HANDSHAKE] Config sent to SN=%s:\n%s", serial, config)
+
+    # M9 FIX: Single commit at end of handler instead of scattered commits
+    await db.commit()
     return Response(content=config, media_type="text/plain")
 
 
@@ -116,20 +147,20 @@ async def _handle_post(request: Request, db: AsyncSession) -> Response:
     )
 
     if not _is_allowed(serial):
-        logger.warning("[PUSH] REJECTED — SN=%s not in allowlist", serial)
+        logger.warning("[PUSH] REJECTED -- SN=%s not in allowlist", serial)
         return Response(status_code=403, content="Unauthorized")
 
     await _get_or_create_device(db, serial, client_ip)
 
     # Empty body = keepalive heartbeat, not a data push
     if not body_text.strip():
-        logger.debug("[PUSH] Empty body from SN=%s — heartbeat only", serial)
+        logger.debug("[PUSH] Empty body from SN=%s -- heartbeat only", serial)
         await db.commit()
         return Response(content="OK: 0", media_type="text/plain")
 
     # Non-attendance tables (OPERLOG, USERLOG, ATTPHOTO) — acknowledge and skip
     if table and table != "ATTLOG":
-        logger.debug("[PUSH] table=%s from SN=%s — not attendance, skipping", table, serial)
+        logger.debug("[PUSH] table=%s from SN=%s -- not attendance, skipping", table, serial)
         await db.commit()
         return Response(content="OK: 0", media_type="text/plain")
 
@@ -140,7 +171,7 @@ async def _handle_post(request: Request, db: AsyncSession) -> Response:
         if tab_lines:
             logger.info(
                 "[PUSH] SN=%s: table param absent but found %d tab-separated lines "
-                "→ treating as ATTLOG",
+                "-> treating as ATTLOG",
                 serial, len(tab_lines)
             )
             params["table"] = "ATTLOG"
@@ -172,7 +203,7 @@ async def _handle_post(request: Request, db: AsyncSession) -> Response:
         await db.commit()
         return Response(content="OK: 0", media_type="text/plain")
 
-    # Save with deduplication
+    # Save with deduplication (C3: uses savepoints now)
     saved, dupes = await save_punches(db, serial, payload.punches, source="ADMS")
     logger.info(
         "[PUSH] SN=%s: received=%d  saved=%d  duplicates=%d",
@@ -190,15 +221,15 @@ async def _handle_post(request: Request, db: AsyncSession) -> Response:
                     emp_id, work_date, record.status, record.total_minutes
                 )
             else:
-                # ← THIS IS THE MOST COMMON CAUSE OF "no real data showing"
                 logger.warning(
-                    "[DAILY] SKIPPED emp_device_id='%s' — no Employee row found.\n"
+                    "[DAILY] SKIPPED emp_device_id='%s' -- no Employee row found.\n"
                     "  Fix: POST /api/employees with device_user_id='%s'",
                     emp_id, emp_id
                 )
         except Exception as exc:
             logger.error("[DAILY] Failed emp=%s date=%s: %s", emp_id, work_date, exc)
 
+    # M9 FIX: Single commit at end of handler
     await db.commit()
     return Response(content=f"OK: {saved}", media_type="text/plain")
 
@@ -229,7 +260,7 @@ async def devicecmd(r: Request):
 
 @router.get("/")
 async def root_get(r: Request, db: AsyncSession = Depends(get_db)):
-    if r.query_params.get("SN") or _looks_like_device(r):
+    if _looks_like_device(r):
         return await _handle_get(r, db)
     return Response(content="Attendance System OK", media_type="text/plain")
 

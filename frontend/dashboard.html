@@ -249,9 +249,9 @@
   <!-- API config bar -->
   <div class="api-cfg" id="apiBar">
     <label>API Base URL</label>
-    <input type="text" id="apiBase" value="http://10.0.1.176:8000" placeholder="http://10.0.1.176:8000"/>
+    <input type="text" id="apiBase" value="" placeholder="http://localhost:8000"/>
     <label>API Key</label>
-    <input type="text" id="apiKey" value="12345SECRET" placeholder="your-api-key" style="max-width:180px"/>
+    <input type="text" id="apiKey" value="" placeholder="Enter API key" style="max-width:180px"/>
     <button class="btn btn-primary" onclick="connect()">Connect</button>
     <span class="server-status" id="serverInfo"></span>
   </div>
@@ -458,12 +458,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
-let API = localStorage.getItem('api_base') || 'http://10.0.1.176:8000';
-let KEY = localStorage.getItem('api_key')  || '12345SECRET';
+// M12 FIX: Auto-detect server URL. H2 FIX: No hardcoded API key.
+let API = localStorage.getItem('api_base') || window.location.origin;
+let KEY = localStorage.getItem('api_key')  || '';
 document.getElementById('apiBase').value = API;
 document.getElementById('apiKey').value  = KEY;
 document.getElementById('setBase').value = API;
 document.getElementById('setKey').value  = KEY;
+if (!KEY) {
+  document.getElementById('serverInfo').textContent = 'Enter API key to connect';
+}
 
 // Set default date inputs
 const today = new Date().toISOString().slice(0,10);
@@ -481,9 +485,18 @@ async function api(path, opts={}) {
   return r.json();
 }
 
+// H8 FIX: Use textContent instead of innerHTML to prevent XSS
 function showError(msg) {
-  document.getElementById('errorBanner').innerHTML =
-    msg ? `<div class="error-msg">${msg}</div>` : '';
+  const el = document.getElementById('errorBanner');
+  if (msg) {
+    const div = document.createElement('div');
+    div.className = 'error-msg';
+    div.textContent = msg;
+    el.innerHTML = '';
+    el.appendChild(div);
+  } else {
+    el.innerHTML = '';
+  }
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────────

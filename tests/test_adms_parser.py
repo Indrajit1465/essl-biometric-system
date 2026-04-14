@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # tests/test_adms_parser.py
 """
-Quick integration test — verifies the full ADMS parse → DB save pipeline
+Integration test -- verifies the full ADMS parse -> DB save pipeline
 without needing a real device.
 
 Run with:  python tests/test_adms_parser.py
+    or:    pytest tests/test_adms_parser.py -v
 """
 import asyncio
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.adms_parser import parse_adms_body, build_handshake_response
@@ -51,12 +53,12 @@ async def run_test():
     print(f"    Punches     : {len(payload.punches)}")
     print(f"    Parse errors: {len(payload.parse_errors)}")
     for p in payload.punches:
-        print(f"    → emp={p.employee_id} time={p.punch_time} status={p.status_label}")
+        print(f"    -> emp={p.employee_id} time={p.punch_time} status={p.status_label}")
 
     assert len(payload.punches) == 4, f"Expected 4 punches, got {len(payload.punches)}"
     assert payload.punches[0].employee_id == "101"
     assert payload.punches[0].status == 0  # CHECK_IN
-    print("    ✓ Parse assertions passed")
+    print("    [OK] Parse assertions passed")
 
     # 3. Database test
     print("\n[3] DB: creating tables...")
@@ -75,12 +77,12 @@ async def run_test():
         db.add(emp)
         try:
             await db.commit()
-            print("    ✓ Test employee created")
+            print("    [OK] Test employee created")
         except Exception:
             await db.rollback()
-            print("    ℹ Test employee already exists (re-run)")
+            print("    [INFO] Test employee already exists (re-run)")
 
-        # Save punches
+        # Save punches (C3: now uses savepoints)
         async with AsyncSessionLocal() as db2:
             saved, dupes = await save_punches(db2, SAMPLE_SN, payload.punches, source="TEST")
             await db2.commit()
@@ -91,9 +93,9 @@ async def run_test():
             await db2.commit()
             print(f"    Re-save: Saved={saved2}, Duplicates={dupes2}")
             assert saved2 == 0 and dupes2 == 4, "Deduplication failed!"
-            print("    ✓ Deduplication works correctly")
+            print("    [OK] Deduplication works correctly")
 
-        # Recompute daily
+        # Recompute daily (C4: uses IST-adjusted bounds now)
         async with AsyncSessionLocal() as db3:
             from datetime import date
             record = await recompute_daily(db3, "101", date(2024, 6, 1))
@@ -107,12 +109,12 @@ async def run_test():
                 print(f"      is_late       : {record.is_late}")
                 print(f"      late_minutes  : {record.late_minutes}")
                 print(f"      overtime_min  : {record.overtime_minutes}")
-                print("    ✓ Daily computation successful")
+                print("    [OK] Daily computation successful")
             else:
-                print("    ✗ Daily record not computed (check employee mapping)")
+                print("    [FAIL] Daily record not computed (check employee mapping)")
 
     print("\n" + "=" * 60)
-    print("  All tests passed ✓")
+    print("  All tests passed!")
     print("  Start the server: python main.py")
     print("  Swagger docs    : http://localhost:8000/docs")
     print("=" * 60)

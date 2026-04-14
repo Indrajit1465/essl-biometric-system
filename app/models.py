@@ -4,7 +4,7 @@ from datetime import datetime, date
 from typing import Optional
 from sqlalchemy import (
     BigInteger, Boolean, Date, DateTime, Float,
-    ForeignKey, Integer, SmallInteger, String, Text,
+    ForeignKey, Index, Integer, SmallInteger, String, Text,
     UniqueConstraint, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -33,8 +33,11 @@ class RawPunchLog(Base):
     __tablename__ = "raw_punch_logs"
     __table_args__ = (
         UniqueConstraint("device_serial", "employee_device_id", "punch_time", name="uq_punch"),
+        # M4: Composite index for the most common query pattern
+        Index("ix_punch_emp_time", "employee_device_id", "punch_time"),
+        Index("ix_punch_processed", "is_processed"),
     )
-    id:                 Mapped[int]  = mapped_column(BigInteger, primary_key=True)
+    id:                 Mapped[int]  = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     device_serial:      Mapped[str]  = mapped_column(String(64), ForeignKey("devices.serial_number"))
     employee_device_id: Mapped[str]  = mapped_column(String(64), nullable=False)
     punch_time:         Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -66,7 +69,10 @@ class Employee(Base):
 class DailyAttendance(Base):
     """Internal computed table — stores raw UTC datetimes."""
     __tablename__ = "daily_attendance"
-    __table_args__ = (UniqueConstraint("employee_id", "work_date", name="uq_daily"),)
+    __table_args__ = (
+        UniqueConstraint("employee_id", "work_date", name="uq_daily"),
+        Index("ix_daily_date", "work_date"),
+    )
     id:               Mapped[int]           = mapped_column(Integer, primary_key=True)
     employee_id:      Mapped[int]           = mapped_column(Integer, ForeignKey("employees.id"))
     work_date:        Mapped[date]          = mapped_column(Date, nullable=False)
@@ -89,7 +95,11 @@ class AttendanceSummary(Base):
     Populated/refreshed by recompute_daily().
     """
     __tablename__ = "attendance_summary"
-    __table_args__ = (UniqueConstraint("emp_id", "work_date", name="uq_summary"),)
+    __table_args__ = (
+        UniqueConstraint("emp_id", "work_date", name="uq_summary"),
+        Index("ix_summary_date", "work_date"),
+        Index("ix_summary_emp_date", "emp_id", "work_date"),
+    )
 
     id:           Mapped[int]           = mapped_column(Integer, primary_key=True)
     # FK to employees table
