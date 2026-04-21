@@ -24,6 +24,7 @@ class Device(Base):
     port:          Mapped[int]           = mapped_column(Integer, default=4370)
     protocol:      Mapped[str]           = mapped_column(String(16), default="ADMS")
     is_active:     Mapped[bool]          = mapped_column(Boolean, default=True)
+    timezone_offset: Mapped[float]       = mapped_column(Float, default=5.5)
     last_seen_at:  Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at:    Mapped[datetime]      = mapped_column(DateTime, server_default=func.now())
     punch_logs: Mapped[list[RawPunchLog]] = relationship(back_populates="device")
@@ -36,6 +37,7 @@ class RawPunchLog(Base):
         # M4: Composite index for the most common query pattern
         Index("ix_punch_emp_time", "employee_device_id", "punch_time"),
         Index("ix_punch_processed", "is_processed"),
+        Index("ix_punch_time", "punch_time"),
     )
     id:                 Mapped[int]  = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     device_serial:      Mapped[str]  = mapped_column(String(64), ForeignKey("devices.serial_number"))
@@ -59,7 +61,7 @@ class Employee(Base):
     department:      Mapped[Optional[str]] = mapped_column(String(128))
     shift_start:     Mapped[Optional[str]] = mapped_column(String(8))
     shift_end:       Mapped[Optional[str]] = mapped_column(String(8))
-    grace_minutes:   Mapped[int]           = mapped_column(Integer, default=15)
+    grace_minutes:   Mapped[int]           = mapped_column(Integer, default=0)
     is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)
     created_at:      Mapped[datetime]      = mapped_column(DateTime, server_default=func.now())
     daily_records:   Mapped[list[DailyAttendance]] = relationship(back_populates="employee")

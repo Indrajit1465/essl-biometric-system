@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,13 +14,15 @@ from app.config import settings
 from app.database import get_db
 from app.models import AttendanceSummary, DailyAttendance, Device, Employee, RawPunchLog
 from app.pull_sync import async_pull_and_save, get_device_info, PYZK_AVAILABLE, sync_employees_from_device
-from app.attendance_processor import recompute_daily, reprocess_all_pending, recompute_today, _fmt_ist, IST_OFFSET, _ist_day_bounds_utc
+from app.attendance_processor import recompute_daily, reprocess_all_pending, recompute_today, _fmt_local, _local_day_bounds_utc
 from app.schemas import EmployeeCreate, DeviceRegister
+from app.websockets import manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["API"])
 
-IST = timezone(IST_OFFSET)
+DEFAULT_TZ_OFFSET = timedelta(hours=5.5)
+IST = timezone(DEFAULT_TZ_OFFSET)
 
 
 def _today_ist() -> date:
@@ -39,8 +41,8 @@ def _fmt_late(minutes: int) -> str:
 
 def _naive_utc_range(s: date, e: date):
     """C4 FIX: Convert IST date range to naive-UTC datetime bounds."""
-    start = datetime.combine(s, datetime.min.time()) - IST_OFFSET
-    end = datetime.combine(e, datetime.max.time()) - IST_OFFSET
+    start = datetime.combine(s, datetime.min.time()) - DEFAULT_TZ_OFFSET
+    end = datetime.combine(e, datetime.max.time()) - DEFAULT_TZ_OFFSET
     return start, end
 
 
@@ -71,6 +73,19 @@ def _check_rate_limit(request: Request):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     _rate_store[client_ip].append(now)
+
+
+# ── WebSockets ────────────────────────────────────────────────────────────────
+
+@router.websocket("/ws/live-punches")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # We must await receive to detect disconnects
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 # ── Attendance Summary (new clean table) ──────────────────────────────────────
@@ -180,7 +195,8 @@ async def get_raw_punches(
 ):
     """Raw punch log for one employee -- times in IST HH:MM."""
     _check_rate_limit(request)
-    # C4 FIX: Use IST-adjusted UTC range
+    # Use global default timezone offset fallback of 5.5 for raw punch bounds, 
+    # since API doesn't know device without a lookup. Or query all punches locally.
     day_start, day_end = _naive_utc_range(start_date, end_date)
     punches = (await db.execute(
         select(RawPunchLog)
@@ -196,8 +212,8 @@ async def get_raw_punches(
     VERIFY = {1:"FINGERPRINT", 3:"PASSWORD", 11:"FACE", 200:"RFID", 255:"CARD/OTHER"}
     return [
         {
-            "date":        (p.punch_time + IST_OFFSET).strftime("%Y-%m-%d") if p.punch_time else None,
-            "time_ist":    _fmt_ist(p.punch_time),
+            "date":        (p.punch_time + timedelta(hours=5.5)).strftime("%Y-%m-%d") if p.punch_time else None,
+            "time_ist":    (p.punch_time + timedelta(hours=5.5)).strftime("%H:%M") if p.punch_time else None,
             "status":      STATUS.get(p.status, str(p.status)),
             "verify_type": VERIFY.get(p.verify_type, str(p.verify_type)),
             "device":      p.device_serial,
@@ -286,13 +302,26 @@ async def dashboard_trend(
         .order_by(AttendanceSummary.work_date)
     )).all()
 
+    emp_n = (await db.execute(select(func.count()).select_from(Employee).where(Employee.is_active.is_(True)))).scalar()
+
+    # Pre-fill all days to ensure no gaps in the chart
     by_date: dict = {}
+    for i in range(days):
+        d = (start + timedelta(days=i)).isoformat()
+        by_date[d] = {"date": d, "present": 0, "late": 0, "absent": 0, "half_day": 0, "missing_out": 0}
+
     for r in rows:
         d = r.work_date.isoformat() if hasattr(r.work_date, "isoformat") else str(r.work_date)
-        if d not in by_date:
-            by_date[d] = {"date": d, "present": 0, "late": 0, "absent": 0, "half_day": 0}
-        key = r.status.lower() if r.status.lower() in ("present","late","absent","half_day") else "absent"
-        by_date[d][key] = r.n
+        if d in by_date:
+            key = r.status.lower() if r.status.lower() in ("present","late","absent","half_day","missing_out") else "absent"
+            by_date[d][key] += r.n
+            
+    # Calculate true absent value based on total active employees
+    emp_total = emp_n or 0
+    for d, data in by_date.items():
+        tracked_emps = data["present"] + data["late"] + data["half_day"] + data["missing_out"] + data["absent"]
+        data["absent"] = max(0, emp_total - tracked_emps) + data["absent"]
+
     return list(by_date.values())
 
 

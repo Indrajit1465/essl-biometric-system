@@ -47,8 +47,10 @@ class DeviceInfo:
 def _make_zk(ip: str, port: int = 4370, password: int = 0) -> "ZK":
     if not PYZK_AVAILABLE:
         raise RuntimeError("pyzk not installed. Run: pip install pyzk")
+    # ommit_ping=True: Skip ICMP ping check — ICMP is often blocked by
+    # firewalls even when TCP port 4370 is open. (Note: 'ommit' is a typo in pyzk)
     return ZK(ip, port=port, timeout=settings.PULL_DEVICE_TIMEOUT,
-               password=password, force_udp=False, ommit_ping=False)
+               password=password, force_udp=False, ommit_ping=True)
 
 
 def _with_retry(func, *args, max_retries: int = 3, **kwargs):
@@ -151,7 +153,7 @@ async def sync_employees_from_device(db, ip: str, port: int = 4370) -> dict:
                 department="Unassigned",
                 shift_start="09:00",
                 shift_end="18:00",
-                grace_minutes=15,
+                grace_minutes=0,
                 is_active=True,
             )
             db.add(emp)
